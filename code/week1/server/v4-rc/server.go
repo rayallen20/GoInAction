@@ -5,16 +5,37 @@ import (
 	"net/http"
 )
 
-type Server struct {
+var _ ServerInterface = &HTTPServer{}
+
+type HTTPServer struct {
+	*router
+}
+
+func NewHTTPServer() *HTTPServer {
+	return &HTTPServer{
+		router: newRouter(),
+	}
 }
 
 // ServeHTTP 是http.Handler接口的方法 此处必须先写个实现 不然Server不是http.Handler接口的实现
-func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+func (s *HTTPServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	ctx := &Context{
+		Req:  r,
+		Resp: w,
+	}
+
+	s.serve(ctx)
+
+	panic("implement me")
+}
+
+// serve 查找路由树并执行匹配到的节点所对应的处理函数
+func (s *HTTPServer) serve(ctx *Context) {
 	panic("implement me")
 }
 
 // Start 启动服务器
-func (s *Server) Start(addr string) error {
+func (s *HTTPServer) Start(addr string) error {
 	listener, err := net.Listen("tcp", addr)
 	if err != nil {
 		return err
@@ -23,17 +44,12 @@ func (s *Server) Start(addr string) error {
 	return http.Serve(listener, s)
 }
 
-// addRoute 注册路由
-func (s *Server) addRoute(method string, pattern string, handler HandleFunc) {
-	panic("implement me")
-}
-
 // GET 注册GET路由
-func (s *Server) GET(path string, handler HandleFunc) {
+func (s *HTTPServer) GET(path string, handler HandleFunc) {
 	s.addRoute(http.MethodGet, path, handler)
 }
 
 // POST 注册POST路由
-func (s *Server) POST(path string, handler HandleFunc) {
+func (s *HTTPServer) POST(path string, handler HandleFunc) {
 	s.addRoute(http.MethodPost, path, handler)
 }
