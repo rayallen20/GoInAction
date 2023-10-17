@@ -25,13 +25,19 @@ func (s *HTTPServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.serve(ctx)
-
-	panic("implement me")
 }
 
 // serve 查找路由树并执行匹配到的节点所对应的处理函数
 func (s *HTTPServer) serve(ctx *Context) {
-	panic("implement me")
+	method := ctx.Req.Method
+	path := ctx.Req.URL.Path
+	targetNode, found := s.router.findRoute(method, path)
+	if !found || targetNode.HandleFunc == nil {
+		ctx.Resp.WriteHeader(http.StatusNotFound)
+		_, _ = ctx.Resp.Write([]byte("not found"))
+		return
+	}
+	targetNode.HandleFunc(ctx)
 }
 
 // Start 启动服务器
