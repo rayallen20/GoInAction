@@ -30,3 +30,18 @@ func (n *node) findOrCreate(segment string) *node {
 	// 当前节点的子节点映射中存在目标子节点 则直接返回
 	return target
 }
+
+// childOf 本方法用于根据给定的path值 在当前节点的子节点映射中查找path为给定path值的节点
+// 找到则返回节点 否则返回 nil, false
+func (n *node) childOf(path string) (*node, bool) {
+	if n.children == nil {
+		return nil, false
+	}
+
+	child, found := n.children[path]
+	if !found {
+		return nil, false
+	}
+
+	return child, true
+}

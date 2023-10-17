@@ -228,7 +228,20 @@ func TestRouter_Illegal_Path(t *testing.T) {
 
 func TestRouter_FindRoute(t *testing.T) {
 	// step1. 构造路由树
-	testRoutes := []TestNode{}
+	testRoutes := []TestNode{
+		{
+			method: http.MethodGet,
+			path:   "/user",
+		},
+		{
+			method: http.MethodGet,
+			path:   "/order/detail",
+		},
+		{
+			method: http.MethodGet,
+			path:   "/",
+		},
+	}
 	r := newRouter()
 	mockHandle := func(ctx *Context) {}
 
@@ -248,20 +261,93 @@ func TestRouter_FindRoute(t *testing.T) {
 		isFound bool
 		// wantNode 期望的路由节点
 		wantNode *node
-	}{}
+	}{
+		{
+			name:     "Method not found",
+			method:   http.MethodDelete,
+			path:     "/user",
+			isFound:  false,
+			wantNode: nil,
+		},
+		{
+			name:    "completely match",
+			method:  http.MethodGet,
+			path:    "/order/detail",
+			isFound: true,
+			wantNode: &node{
+				path:       "detail",
+				children:   nil,
+				HandleFunc: mockHandle,
+			},
+		},
+		{
+			name:    "nil handle func",
+			method:  http.MethodGet,
+			path:    "/order",
+			isFound: true,
+			wantNode: &node{
+				path: "order",
+				children: map[string]*node{
+					"detail": &node{
+						path:       "detail",
+						children:   nil,
+						HandleFunc: mockHandle,
+					},
+				},
+				HandleFunc: nil,
+			},
+		},
+		{
+			name:    "root node",
+			method:  http.MethodGet,
+			path:    "/",
+			isFound: true,
+			wantNode: &node{
+				path: "/",
+				children: map[string]*node{
+					"user": &node{
+						path:       "user",
+						children:   nil,
+						HandleFunc: mockHandle,
+					},
+					"order": &node{
+						path: "order",
+						children: map[string]*node{
+							"detail": &node{
+								path:       "detail",
+								children:   nil,
+								HandleFunc: mockHandle,
+							},
+						},
+						HandleFunc: nil,
+					},
+				},
+				HandleFunc: mockHandle,
+			},
+		},
+		{
+			name:     "path not found",
+			method:   http.MethodGet,
+			path:     "/login",
+			isFound:  false,
+			wantNode: nil,
+		},
+	}
 
 	// step3. 测试是否找到节点
 	for _, testCase := range testCases {
-		foundNode, found := r.findRoute(testCase.method, testCase.path)
-		assert.Equal(t, testCase.isFound, found)
-		// 3.1 判断在路由树中是否找到了节点
-		if !found {
-			return
-		}
+		t.Run(testCase.name, func(t *testing.T) {
+			foundNode, found := r.findRoute(testCase.method, testCase.path)
+			assert.Equal(t, testCase.isFound, found)
+			// 3.1 判断在路由树中是否找到了节点
+			if !found {
+				return
+			}
 
-		// 3.2 判断找到的节点和预期的节点是否相同
-		msg, equal := testCase.wantNode.equal(foundNode)
-		assert.True(t, equal, msg)
+			// 3.2 判断找到的节点和预期的节点是否相同
+			msg, equal := testCase.wantNode.equal(foundNode)
+			assert.True(t, equal, msg)
+		})
 	}
 }
 
