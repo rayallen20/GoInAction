@@ -155,7 +155,20 @@ func (n *node) equal(target *node) (msg string, ok bool) {
 		return msg, false
 	}
 
-	// step4. 比较2个节点的处理函数是否相同
+	// step4. 比较2个节点的通配符子节点是否相同
+	if n.wildcardChild != nil {
+		if target.wildcardChild == nil {
+			msg = fmt.Sprintf("目标节点的通配符子节点为空")
+			return msg, false
+		}
+		_, equal := n.wildcardChild.equal(target.wildcardChild)
+		if !equal {
+			msg = fmt.Sprintf("期望节点 %s 的通配符子节点与目标节点 %s 的通配符子节点不等", n.path, target.path)
+			return msg, false
+		}
+	}
+
+	// step5. 比较2个节点的处理函数是否相同
 	wantHandler := reflect.ValueOf(n.HandleFunc)
 	targetHandler := reflect.ValueOf(target.HandleFunc)
 	if wantHandler != targetHandler {
@@ -163,16 +176,16 @@ func (n *node) equal(target *node) (msg string, ok bool) {
 		return msg, false
 	}
 
-	// step5. 比较2个节点的子节点是否相同
+	// step6. 比较2个节点的子节点是否相同
 	for path, child := range n.children {
-		// step5.1 比对2个节点的子节点的路径是否相同
+		// step6.1 比对2个节点的子节点的路径是否相同
 		dstChild, exist := target.children[path]
 		if !exist {
 			msg = fmt.Sprintf("目标节点中不存在路径为: %s 的子节点", path)
 			return msg, false
 		}
 
-		// step5.2 对路径相同的子节点递归比对
+		// step6.2 对路径相同的子节点递归比对
 		msg, equal := child.equal(dstChild)
 		if !equal {
 			return msg, false
@@ -357,4 +370,164 @@ type TestCaseNode struct {
 	path     string // path 路由路径
 	isFound  bool   // isFound 是否找到了节点
 	wantNode *node  // wantNode 期望的路由节点
+}
+
+func TestRouter_wildcard(t *testing.T) {
+	// step1. 构造路由树
+	testRoutes := []TestNode{
+		// 普通节点的通配符子节点
+		{
+			method: http.MethodGet,
+			path:   "/order/*",
+		},
+		// 根节点的通配符子节点
+		{
+			method: http.MethodGet,
+			path:   "/*",
+		},
+		// 通配符子节点的通配符子节点
+		{
+			method: http.MethodGet,
+			path:   "/*/*",
+		},
+		// 通配符子节点的普通子节点
+		{
+			method: http.MethodGet,
+			path:   "/*/get",
+		},
+		// 通配符子节点的普通子节点的通配符子节点
+		{
+			method: http.MethodGet,
+			path:   "/*/order/*",
+		},
+	}
+
+	r := newRouter()
+	mockHandleFunc := func(ctx *Context) {}
+	for _, testRoute := range testRoutes {
+		r.addRoute(testRoute.method, testRoute.path, mockHandleFunc)
+	}
+
+	// step2. 断言路由树
+	wantRouter := &router{
+		trees: map[string]*node{
+			http.MethodGet: &node{
+				path: "/",
+				children: map[string]*node{
+					"order": &node{
+						path:     "order",
+						children: nil,
+						wildcardChild: &node{
+							path:          "*",
+							children:      nil,
+							wildcardChild: nil,
+							HandleFunc:    mockHandleFunc,
+						},
+						HandleFunc: nil,
+					},
+				},
+				wildcardChild: &node{
+					path: "*",
+					children: map[string]*node{
+						"get": &node{
+							path:          "get",
+							children:      nil,
+							wildcardChild: nil,
+							HandleFunc:    mockHandleFunc,
+						},
+						"order": &node{
+							path:     "order",
+							children: nil,
+							wildcardChild: &node{
+								path:          "*",
+								children:      nil,
+								wildcardChild: nil,
+								HandleFunc:    mockHandleFunc,
+							},
+							HandleFunc: nil,
+						},
+					},
+					wildcardChild: &node{
+						path:          "*",
+						children:      nil,
+						wildcardChild: nil,
+						HandleFunc:    mockHandleFunc,
+					},
+					HandleFunc: mockHandleFunc,
+				},
+				HandleFunc: nil,
+			},
+		},
+	}
+
+	msg, ok := wantRouter.equal(r)
+	assert.True(t, ok, msg)
+}
+
+func TestRouter_FindRoute_Wildcard(t *testing.T) {
+	// step1. 构造路由树
+	testRoutes := []TestNode{
+		{
+			method: http.MethodGet,
+			path:   "/order/*",
+		},
+		{
+			method: http.MethodGet,
+			path:   "/order/create",
+		},
+	}
+
+	r := newRouter()
+	mockHandle := func(ctx *Context) {}
+
+	for _, testRoute := range testRoutes {
+		r.addRoute(testRoute.method, testRoute.path, mockHandle)
+	}
+
+	// step2. 构造测试用例
+	testCases := []struct {
+		name     string
+		method   string
+		path     string
+		isFound  bool
+		wantNode *node
+	}{
+		{
+			name:    "普通节点的通配符子节点",
+			method:  http.MethodGet,
+			path:    "/order/detail",
+			isFound: true,
+			wantNode: &node{
+				path:          "*",
+				children:      nil,
+				wildcardChild: nil,
+				HandleFunc:    mockHandle,
+			},
+		},
+		{
+			name:    "普通节点下通配符子节点和普通子节点共存",
+			method:  http.MethodGet,
+			path:    "/order/create",
+			isFound: true,
+			wantNode: &node{
+				path:          "create",
+				children:      nil,
+				wildcardChild: nil,
+				HandleFunc:    mockHandle,
+			},
+		},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			targetNode, found := r.findRoute(testCase.method, testCase.path)
+			assert.Equal(t, testCase.isFound, found)
+			if !found {
+				return
+			}
+
+			msg, equal := testCase.wantNode.equal(targetNode)
+			assert.True(t, equal, msg)
+		})
+	}
 }

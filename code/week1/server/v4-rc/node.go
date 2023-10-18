@@ -6,6 +6,8 @@ type node struct {
 	path string
 	// children 子节点 key为子节点的路由路径 value为路径对应子节点
 	children map[string]*node
+	// wildcardChild 通配符子节点
+	wildcardChild *node
 	// HandleFunc 路由对应的处理函数
 	HandleFunc
 }
@@ -13,6 +15,16 @@ type node struct {
 // findOrCreate 本方法用于根据给定的path值 在当前节点的子节点中查找path为给定path值的节点
 // 找到则返回 未找到则创建
 func (n *node) findOrCreate(segment string) *node {
+	// 若路径为* 则查找或创建通配符子节点
+	if segment == "*" {
+		if n.wildcardChild == nil {
+			n.wildcardChild = &node{
+				path: "*",
+			}
+		}
+		return n.wildcardChild
+	}
+
 	if n.children == nil {
 		n.children = make(map[string]*node)
 	}
@@ -35,12 +47,12 @@ func (n *node) findOrCreate(segment string) *node {
 // 找到则返回节点 否则返回 nil, false
 func (n *node) childOf(path string) (*node, bool) {
 	if n.children == nil {
-		return nil, false
+		return n.wildcardChild, n.wildcardChild != nil
 	}
 
 	child, found := n.children[path]
 	if !found {
-		return nil, false
+		return n.wildcardChild, n.wildcardChild != nil
 	}
 
 	return child, true

@@ -109,7 +109,7 @@ func (r *router) findRoute(method string, path string) (*node, bool) {
 	path = strings.TrimLeft(path, "/")
 	pathSegments := strings.Split(path, "/")
 	for _, pathSegment := range pathSegments {
-		target, ok = target.children[pathSegment]
+		target, ok = target.childOf(pathSegment)
 		if !ok {
 			return nil, false
 		}
