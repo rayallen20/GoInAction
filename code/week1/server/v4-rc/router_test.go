@@ -155,7 +155,20 @@ func (n *node) equal(target *node) (msg string, ok bool) {
 		return msg, false
 	}
 
-	// step4. 比较2个节点的通配符子节点是否相同
+	// step4. 比对2个节点的参数子节点是否相同
+	if n.paramChild != nil {
+		if target.paramChild == nil {
+			msg = fmt.Sprintf("目标节点的参数节点为空")
+			return msg, false
+		}
+		_, equal := n.paramChild.equal(target.paramChild)
+		if !equal {
+			msg = fmt.Sprintf("期望节点 %s 的参数子节点与目标节点 %s 的参数子节点不等", n.path, target.path)
+			return msg, false
+		}
+	}
+
+	// step5. 比较2个节点的通配符子节点是否相同
 	if n.wildcardChild != nil {
 		if target.wildcardChild == nil {
 			msg = fmt.Sprintf("目标节点的通配符子节点为空")
@@ -530,4 +543,72 @@ func TestRouter_FindRoute_Wildcard(t *testing.T) {
 			assert.True(t, equal, msg)
 		})
 	}
+}
+
+func TestRouter_addParamRoute(t *testing.T) {
+	// step1. 构造路由树
+	testRoutes := []TestNode{
+		{
+			method: http.MethodGet,
+			path:   "/order/detail/:id",
+		},
+	}
+
+	r := newRouter()
+	mockHandleFunc := func(ctx *Context) {}
+	for _, testRoute := range testRoutes {
+		r.addRoute(testRoute.method, testRoute.path, mockHandleFunc)
+	}
+
+	// step2. 验证路由树
+	wantRoute := &router{
+		trees: map[string]*node{
+			http.MethodGet: &node{
+				path: "/",
+				children: map[string]*node{
+					"order": &node{
+						path: "order",
+						children: map[string]*node{
+							"detail": &node{
+								path:          "detail",
+								children:      nil,
+								wildcardChild: nil,
+								paramChild: &node{
+									path:          ":id",
+									children:      nil,
+									wildcardChild: nil,
+									paramChild:    nil,
+									HandleFunc:    mockHandleFunc,
+								},
+								HandleFunc: nil,
+							},
+						},
+						wildcardChild: nil,
+						paramChild:    nil,
+						HandleFunc:    nil,
+					},
+				},
+				wildcardChild: nil,
+				paramChild:    nil,
+				HandleFunc:    nil,
+			},
+		},
+	}
+
+	msg, equal := wantRoute.equal(r)
+	assert.True(t, equal, msg)
+}
+
+func TestRouter_findRoute_param_and_wildcard_coexist(t *testing.T) {
+	// step1. 注册通配符路由
+	r := newRouter()
+	mockHandleFunc := func(ctx *Context) {}
+	r.addRoute(http.MethodGet, "/user/*", mockHandleFunc)
+
+	// step2. 断言非法注册
+	panicFunc := func() {
+		r.addRoute(http.MethodGet, "/user/:id", mockHandleFunc)
+	}
+
+	assert.Panicsf(t, panicFunc, "web: 非法路由,节点 detail 已有通配符路由.不允许同时注册通配符路由和参数路由")
 }

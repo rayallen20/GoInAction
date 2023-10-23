@@ -1,22 +1,44 @@
 package v4_rc
 
+import (
+	"fmt"
+	"strings"
+)
+
 // node 路由树中的节点
 type node struct {
-	// path 路由路径
-	path string
-	// children 子节点 key为子节点的路由路径 value为路径对应子节点
-	children map[string]*node
-	// wildcardChild 通配符子节点
-	wildcardChild *node
-	// HandleFunc 路由对应的处理函数
-	HandleFunc
+	path          string           // path 路由路径
+	children      map[string]*node // children 子节点 key为子节点的路由路径 value为路径对应子节点
+	wildcardChild *node            // wildcardChild 通配符子节点
+	paramChild    *node            // paramChild 参数路由子节点
+	HandleFunc                     // HandleFunc 路由对应的处理函数
 }
 
 // findOrCreate 本方法用于根据给定的path值 在当前节点的子节点中查找path为给定path值的节点
 // 找到则返回 未找到则创建
 func (n *node) findOrCreate(segment string) *node {
+	// 若路径以:开头 则查找或创建参数子节点
+	if strings.HasPrefix(segment, ":") {
+		if n.wildcardChild != nil {
+			msg := fmt.Sprintf("web: 非法路由,节点 %s 已有通配符路由.不允许同时注册通配符路由和参数路由", n.path)
+			panic(msg)
+		}
+
+		if n.paramChild == nil {
+			n.paramChild = &node{
+				path: segment,
+			}
+		}
+		return n.paramChild
+	}
+
 	// 若路径为* 则查找或创建通配符子节点
 	if segment == "*" {
+		if n.paramChild != nil {
+			msg := fmt.Sprintf("web: 非法路由,节点 %s 已有参数路由.不允许同时注册通配符路由和参数路由", n.path)
+			panic(msg)
+		}
+
 		if n.wildcardChild == nil {
 			n.wildcardChild = &node{
 				path: "*",
