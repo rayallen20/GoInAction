@@ -286,7 +286,7 @@ func TestRouter_FindRoute(t *testing.T) {
 		// isFound 是否找到了节点
 		isFound bool
 		// wantNode 期望的路由节点
-		wantNode *node
+		wantNode *matchNode
 	}{
 		{
 			name:     "Method not found",
@@ -300,10 +300,13 @@ func TestRouter_FindRoute(t *testing.T) {
 			method:  http.MethodGet,
 			path:    "/order/detail",
 			isFound: true,
-			wantNode: &node{
-				path:       "detail",
-				children:   nil,
-				HandleFunc: mockHandle,
+			wantNode: &matchNode{
+				node: &node{
+					path:       "detail",
+					children:   nil,
+					HandleFunc: mockHandle,
+				},
+				pathParams: nil,
 			},
 		},
 		{
@@ -311,16 +314,19 @@ func TestRouter_FindRoute(t *testing.T) {
 			method:  http.MethodGet,
 			path:    "/order",
 			isFound: true,
-			wantNode: &node{
-				path: "order",
-				children: map[string]*node{
-					"detail": &node{
-						path:       "detail",
-						children:   nil,
-						HandleFunc: mockHandle,
+			wantNode: &matchNode{
+				node: &node{
+					path: "order",
+					children: map[string]*node{
+						"detail": &node{
+							path:       "detail",
+							children:   nil,
+							HandleFunc: mockHandle,
+						},
 					},
+					HandleFunc: nil,
 				},
-				HandleFunc: nil,
+				pathParams: nil,
 			},
 		},
 		{
@@ -328,27 +334,30 @@ func TestRouter_FindRoute(t *testing.T) {
 			method:  http.MethodGet,
 			path:    "/",
 			isFound: true,
-			wantNode: &node{
-				path: "/",
-				children: map[string]*node{
-					"user": &node{
-						path:       "user",
-						children:   nil,
-						HandleFunc: mockHandle,
-					},
-					"order": &node{
-						path: "order",
-						children: map[string]*node{
-							"detail": &node{
-								path:       "detail",
-								children:   nil,
-								HandleFunc: mockHandle,
-							},
+			wantNode: &matchNode{
+				node: &node{
+					path: "/",
+					children: map[string]*node{
+						"user": &node{
+							path:       "user",
+							children:   nil,
+							HandleFunc: mockHandle,
 						},
-						HandleFunc: nil,
+						"order": &node{
+							path: "order",
+							children: map[string]*node{
+								"detail": &node{
+									path:       "detail",
+									children:   nil,
+									HandleFunc: mockHandle,
+								},
+							},
+							HandleFunc: nil,
+						},
 					},
+					HandleFunc: mockHandle,
 				},
-				HandleFunc: mockHandle,
+				pathParams: nil,
 			},
 		},
 		{
@@ -371,7 +380,7 @@ func TestRouter_FindRoute(t *testing.T) {
 			}
 
 			// 3.2 判断找到的节点和预期的节点是否相同
-			msg, equal := testCase.wantNode.equal(foundNode)
+			msg, equal := testCase.wantNode.node.equal(foundNode.node)
 			assert.True(t, equal, msg)
 		})
 	}
@@ -503,18 +512,21 @@ func TestRouter_FindRoute_Wildcard(t *testing.T) {
 		method   string
 		path     string
 		isFound  bool
-		wantNode *node
+		wantNode *matchNode
 	}{
 		{
 			name:    "普通节点的通配符子节点",
 			method:  http.MethodGet,
 			path:    "/order/detail",
 			isFound: true,
-			wantNode: &node{
-				path:          "*",
-				children:      nil,
-				wildcardChild: nil,
-				HandleFunc:    mockHandle,
+			wantNode: &matchNode{
+				node: &node{
+					path:          "*",
+					children:      nil,
+					wildcardChild: nil,
+					HandleFunc:    mockHandle,
+				},
+				pathParams: nil,
 			},
 		},
 		{
@@ -522,11 +534,14 @@ func TestRouter_FindRoute_Wildcard(t *testing.T) {
 			method:  http.MethodGet,
 			path:    "/order/create",
 			isFound: true,
-			wantNode: &node{
-				path:          "create",
-				children:      nil,
-				wildcardChild: nil,
-				HandleFunc:    mockHandle,
+			wantNode: &matchNode{
+				node: &node{
+					path:          "create",
+					children:      nil,
+					wildcardChild: nil,
+					HandleFunc:    mockHandle,
+				},
+				pathParams: nil,
 			},
 		},
 	}
@@ -539,7 +554,7 @@ func TestRouter_FindRoute_Wildcard(t *testing.T) {
 				return
 			}
 
-			msg, equal := testCase.wantNode.equal(targetNode)
+			msg, equal := testCase.wantNode.node.equal(targetNode.node)
 			assert.True(t, equal, msg)
 		})
 	}
@@ -611,4 +626,80 @@ func TestRouter_findRoute_param_and_wildcard_coexist(t *testing.T) {
 	}
 
 	assert.Panicsf(t, panicFunc, "web: 非法路由,节点 detail 已有通配符路由.不允许同时注册通配符路由和参数路由")
+}
+
+func TestRouter_findParamRoute(t *testing.T) {
+	// step1. 构造路由树
+	testRoutes := []*TestNode{
+		{
+			method: http.MethodGet,
+			path:   "/order/:id",
+		},
+		{
+			method: http.MethodGet,
+			path:   "/user/:id/detail",
+		},
+	}
+
+	r := newRouter()
+	mockHandle := func(ctx *Context) {}
+	for _, testRoute := range testRoutes {
+		r.addRoute(testRoute.method, testRoute.path, mockHandle)
+	}
+
+	// step2. 构造测试用例
+	testCases := []struct {
+		name     string
+		method   string
+		path     string
+		isFound  bool
+		wantNode *matchNode
+	}{
+		{
+			name:    "param route",
+			method:  http.MethodGet,
+			path:    "/order/5",
+			isFound: true,
+			wantNode: &matchNode{
+				node: &node{
+					path:          ":id",
+					children:      nil,
+					wildcardChild: nil,
+					paramChild:    nil,
+					HandleFunc:    mockHandle,
+				},
+				pathParams: map[string]string{
+					"id": "5",
+				},
+			},
+		},
+		{
+			name:    "param route",
+			method:  http.MethodGet,
+			path:    "/user/1/detail",
+			isFound: true,
+			wantNode: &matchNode{
+				node: &node{
+					path:          "detail",
+					children:      nil,
+					wildcardChild: nil,
+					paramChild:    nil,
+					HandleFunc:    mockHandle,
+				},
+				pathParams: nil,
+			},
+		},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			findNode, found := r.findRoute(testCase.method, testCase.path)
+			assert.True(t, found, "节点未找到")
+			if !found {
+				return
+			}
+			msg, equal := testCase.wantNode.node.equal(findNode.node)
+			assert.True(t, equal, msg)
+		})
+	}
 }

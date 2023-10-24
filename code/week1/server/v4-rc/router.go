@@ -92,7 +92,8 @@ func (r *router) checkPath(path string) (msg string, ok bool) {
 }
 
 // findRoute 根据给定的HTTP动词和path 在路由树中查找匹配的节点
-func (r *router) findRoute(method string, path string) (*node, bool) {
+func (r *router) findRoute(method string, path string) (*matchNode, bool) {
+	targetMatchNode := &matchNode{}
 	// HTTP动词对应的路由树不存在 直接返回nil false即可
 	root, ok := r.trees[method]
 	if !ok {
@@ -102,17 +103,28 @@ func (r *router) findRoute(method string, path string) (*node, bool) {
 	target := root
 	// 对根节点做特殊处理
 	if path == "/" {
-		return target, true
+		targetMatchNode.node = target
+		return targetMatchNode, true
 	}
 
 	// 在路由树中逐层查找节点
 	path = strings.TrimLeft(path, "/")
 	pathSegments := strings.Split(path, "/")
 	for _, pathSegment := range pathSegments {
-		target, ok = target.childOf(pathSegment)
+		child, isParam, ok := target.childOf(pathSegment)
 		if !ok {
 			return nil, false
 		}
+
+		if isParam {
+			key := strings.TrimPrefix(child.path, ":")
+			value := pathSegment
+			targetMatchNode.addPathParam(key, value)
+		}
+
+		target = child
 	}
-	return target, true
+
+	targetMatchNode.node = target
+	return targetMatchNode, true
 }

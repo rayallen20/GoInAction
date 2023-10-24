@@ -65,17 +65,26 @@ func (n *node) findOrCreate(segment string) *node {
 	return target
 }
 
-// childOf 本方法用于根据给定的path值 在当前节点的子节点映射中查找path为给定path值的节点
-// 找到则返回节点 否则返回 nil, false
-func (n *node) childOf(path string) (*node, bool) {
+// childOf 本方法用于根据给定的path值 在当前节点的子节点映射中查找对应的子节点
+// 若未在当前节点的子节点映射中查找到path对应的节点 则尝试查找当前节点的参数子节点
+// 若未查找到当前节点的参数子节点 则尝试查找当前节点的通配符子节点
+func (n *node) childOf(path string) (targetNode *node, isParamNode bool, isFound bool) {
 	if n.children == nil {
-		return n.wildcardChild, n.wildcardChild != nil
+		if n.paramChild != nil {
+			return n.paramChild, true, true
+		}
+
+		return n.wildcardChild, false, n.wildcardChild != nil
 	}
 
 	child, found := n.children[path]
 	if !found {
-		return n.wildcardChild, n.wildcardChild != nil
+		if n.paramChild != nil {
+			return n.paramChild, true, true
+		}
+
+		return n.wildcardChild, false, n.wildcardChild != nil
 	}
 
-	return child, true
+	return child, false, true
 }

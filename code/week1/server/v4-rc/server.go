@@ -32,12 +32,13 @@ func (s *HTTPServer) serve(ctx *Context) {
 	method := ctx.Req.Method
 	path := ctx.Req.URL.Path
 	targetNode, found := s.router.findRoute(method, path)
-	if !found || targetNode.HandleFunc == nil {
+	if !found || targetNode.node.HandleFunc == nil {
 		ctx.Resp.WriteHeader(http.StatusNotFound)
 		_, _ = ctx.Resp.Write([]byte("not found"))
 		return
 	}
-	targetNode.HandleFunc(ctx)
+	ctx.PathParams = targetNode.pathParams
+	targetNode.node.HandleFunc(ctx)
 }
 
 // Start 启动服务器
