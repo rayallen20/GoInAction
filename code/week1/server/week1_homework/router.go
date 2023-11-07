@@ -131,12 +131,11 @@ func (r *router) findRoute(method string, path string) (*matchNode, bool) {
 	target := root
 
 	for _, segment := range segments {
-		child, isParamChild, found := target.childOf(segment)
-		// 如果在当前节点的子节点映射中没有找到对应的子节点,则直接返回
+		child, found := target.childOf(segment)
 		if !found {
 			// 若未匹配到节点 且 当前节点为通配符节点
-			// 且 当前节点为叶子节点 则返回该叶子节点
-			if target.path == "*" && target.children == nil && target.paramChild == nil && target.wildcardChild == nil {
+			// 且 当前节点为叶子节点(这意味着注册时通配符子节点是最后一段路由段) 则返回该叶子节点
+			if target.typ == nodeTypeAny && target.children == nil && target.paramChild == nil && target.wildcardChild == nil {
 				targetMatchNode.node = target
 				return targetMatchNode, true
 			}
@@ -154,7 +153,7 @@ func (r *router) findRoute(method string, path string) (*matchNode, bool) {
 		}
 
 		// 若当前节点为参数节点,则将参数名和参数值保存到targetMatchNode中
-		if isParamChild {
+		if child.typ == nodeTypeParam {
 			// 参数名是形如 :id 的格式, 因此需要去掉前导的:
 			name := child.path[1:]
 			// 参数值就是当前路由路径中的路由段

@@ -245,6 +245,35 @@ func (n *node) equal(target *node) (msg string, ok bool) {
 	return "", true
 }
 
+// equal 比较两个matchNode是否相等
+// msg: 两个matchNode不相等时的错误信息
+// ok: 两个matchNode是否相等
+func (m *matchNode) equal(target *matchNode) (msg string, ok bool) {
+	// 比对两个matchNode的node是否相等
+	msg, equal := m.node.equal(target.node)
+	if !equal {
+		return msg, false
+	}
+
+	// 比对两个matchNode的pathParams是否相等
+	if len(m.pathParams) != len(target.pathParams) {
+		return fmt.Sprintf("两个matchNode的pathParams长度不相等"), false
+	}
+
+	for name, value := range m.pathParams {
+		dstValue, ok := target.pathParams[name]
+		if !ok {
+			return fmt.Sprintf("目标matchNode的pathParams中没有name为 %s 的pathParam", name), false
+		}
+
+		if value != dstValue {
+			return fmt.Sprintf("两个matchNode的pathParams中name为 %s 的pathParam的值不相等", name), false
+		}
+	}
+
+	return "", true
+}
+
 // TestRouter_addRoute_Illegal_Case 测试路由注册功能的非法用例
 func TestRouter_addRoute_Illegal_Case(t *testing.T) {
 	r := newRouter()
@@ -411,7 +440,7 @@ func TestRouter_findRoute(t *testing.T) {
 
 			// 此处和之前的测试一样 不能直接用assert.Equal()比较 因为HandleFunc不可比
 			// 所以要用封装的node.equal()方法比较
-			msg, found := testCase.matchNode.node.equal(foundNode.node)
+			msg, found := testCase.matchNode.equal(foundNode)
 			assert.True(t, found, msg)
 		})
 	}
@@ -543,6 +572,7 @@ func TestRouter_findRoute_wildcard(t *testing.T) {
 			matchNode: &matchNode{
 				node: &node{
 					path:          "*",
+					typ:           nodeTypeAny,
 					children:      nil,
 					wildcardChild: nil,
 					HandleFunc:    mockHandleFunc,
@@ -558,6 +588,7 @@ func TestRouter_findRoute_wildcard(t *testing.T) {
 			matchNode: &matchNode{
 				node: &node{
 					path:          "detail",
+					typ:           nodeTypeStatic,
 					children:      nil,
 					wildcardChild: nil,
 					HandleFunc:    mockHandleFunc,
@@ -575,7 +606,7 @@ func TestRouter_findRoute_wildcard(t *testing.T) {
 				return
 			}
 
-			msg, found := testCase.matchNode.node.equal(foundNode.node)
+			msg, found := testCase.matchNode.equal(foundNode)
 			assert.True(t, found, msg)
 		})
 	}
@@ -613,6 +644,7 @@ func TestRouter_addParamRoute(t *testing.T) {
 								wildcardChild: nil,
 								paramChild: &node{
 									path:          ":id",
+									typ:           nodeTypeParam,
 									children:      nil,
 									wildcardChild: nil,
 									paramChild:    nil,
@@ -671,6 +703,7 @@ func TestRouter_findRoute_param(t *testing.T) {
 			matchNode: &matchNode{
 				node: &node{
 					path:          ":id",
+					typ:           nodeTypeParam,
 					children:      nil,
 					wildcardChild: nil,
 					paramChild:    nil,
@@ -692,10 +725,36 @@ func TestRouter_findRoute_param(t *testing.T) {
 				return
 			}
 
-			msg, found := testCase.matchNode.node.equal(foundNode.node)
+			msg, found := testCase.matchNode.equal(foundNode)
 			assert.True(t, found, msg)
 		})
 	}
+}
+
+// TestRouter_findRoute_param_and_reg_coexist 测试针对注册参数路由时,已有正则路由的情况
+func TestRouter_findRoute_param_and_reg_coexist(t *testing.T) {
+	// step1. 注册有冲突的路由
+	r := newRouter()
+	mockHandleFunc := func(ctx *Context) {}
+	r.addRoute(http.MethodGet, "/order/detail/:name(.+)", mockHandleFunc)
+
+	// step2. 断言非法用例
+	assert.Panicsf(t, func() {
+		r.addRoute(http.MethodGet, "/order/detail/:id", mockHandleFunc)
+	}, "web: 非法路由,已有正则子节点 .+ .不允许同时注册正则子节点与参数子节点")
+}
+
+// TestRouter_findRoute_param_and_param_coexist 测试针对注册参数路由时,已有参数路由的情况
+func TestRouter_findRoute_param_and_param_coexist(t *testing.T) {
+	// step1. 注册有冲突的路由
+	r := newRouter()
+	mockHandleFunc := func(ctx *Context) {}
+	r.addRoute(http.MethodGet, "/order/detail/:id", mockHandleFunc)
+
+	// step2. 断言非法用例
+	assert.Panicsf(t, func() {
+		r.addRoute(http.MethodGet, "/order/detail/:name", mockHandleFunc)
+	}, "web: 非法路由,已有参数子节点 :id .不允许同时注册多个参数子节点")
 }
 
 // TestRouter_findRoute_param_and_wildcard_coexist 测试针对注册参数路由时,已有通配符路由的情况
@@ -708,7 +767,20 @@ func TestRouter_findRoute_param_and_wildcard_coexist(t *testing.T) {
 	// step2. 断言非法用例
 	assert.Panicsf(t, func() {
 		r.addRoute(http.MethodGet, "/order/detail/:id", mockHandleFunc)
-	}, "web: 非法路由,已有通配符路由.不允许同时注册通配符路由和参数路由")
+	}, "web: 非法路由,已有通配符子节点 * .不允许同时注册通配符子节点与参数子节点")
+}
+
+// TestRouter_findRoute_wildcard_and_reg_coexist 测试针对注册通配符路由时,已有正则路由的情况
+func TestRouter_findRoute_wildcard_and_reg_coexist(t *testing.T) {
+	// step1. 注册有冲突的路由
+	r := newRouter()
+	mockHandleFunc := func(ctx *Context) {}
+	r.addRoute(http.MethodGet, "/order/detail/:id([0-9]+)", mockHandleFunc)
+
+	// step2. 断言非法用例
+	assert.Panicsf(t, func() {
+		r.addRoute(http.MethodGet, "/order/detail/*", mockHandleFunc)
+	}, "web: 非法路由,已有正则子节点 [0-9]+ .不允许同时注册通配符子节点与正则子节点")
 }
 
 // TestRouter_findRoute_wildcard_and_param_coexist 测试针对注册通配符路由时,已有参数路由的情况
@@ -724,17 +796,17 @@ func TestRouter_findRoute_wildcard_and_param_coexist(t *testing.T) {
 	}, "web: 非法路由,已有参数路由.不允许同时注册通配符路由和参数路由")
 }
 
-// TestRouter_findRoute_same_param_coexist 测试针对参数路由时,已有同名参数路由的情况
-func TestRouter_findRoute_same_param_coexist(t *testing.T) {
+// TestRouter_findRoute_wildcard_and_wildcard_coexist 测试针对注册通配符路由时,已有通配符路由的情况
+func TestRouter_findRoute_wildcard_and_wildcard_coexist(t *testing.T) {
 	// step1. 注册有冲突的路由
 	r := newRouter()
 	mockHandleFunc := func(ctx *Context) {}
-	r.addRoute(http.MethodGet, "/order/detail/:id", mockHandleFunc)
+	r.addRoute(http.MethodGet, "/order/detail/*", mockHandleFunc)
 
 	// step2. 断言非法用例
 	assert.Panicsf(t, func() {
-		r.addRoute(http.MethodGet, "/order/detail/:name", mockHandleFunc)
-	}, "web: 路由冲突,参数路由冲突.已存在路由 id")
+		r.addRoute(http.MethodGet, "/order/detail/*", mockHandleFunc)
+	}, "web: 非法路由,已有通配符子节点 * .不允许同时注册多个通配符子节点")
 }
 
 // TestRouter_findRoute_multistage_wildcard 测试在注册路由时,通配符出现在末尾的情况下,通配符匹配多段路由的情况
@@ -780,6 +852,7 @@ func TestRouter_findRoute_multistage_wildcard(t *testing.T) {
 			matchNode: &matchNode{
 				node: &node{
 					path:          "*",
+					typ:           nodeTypeAny,
 					children:      nil,
 					wildcardChild: nil,
 					paramChild:    nil,
@@ -796,6 +869,7 @@ func TestRouter_findRoute_multistage_wildcard(t *testing.T) {
 			matchNode: &matchNode{
 				node: &node{
 					path:          "create",
+					typ:           nodeTypeStatic,
 					children:      nil,
 					wildcardChild: nil,
 					paramChild:    nil,
@@ -812,6 +886,7 @@ func TestRouter_findRoute_multistage_wildcard(t *testing.T) {
 			matchNode: &matchNode{
 				node: &node{
 					path:          "show",
+					typ:           nodeTypeStatic,
 					children:      nil,
 					wildcardChild: nil,
 					paramChild:    nil,
@@ -831,7 +906,7 @@ func TestRouter_findRoute_multistage_wildcard(t *testing.T) {
 				return
 			}
 
-			msg, found := testCase.matchNode.node.equal(foundNode.node)
+			msg, found := testCase.matchNode.equal(foundNode)
 			assert.True(t, found, msg)
 		})
 	}
@@ -1004,11 +1079,47 @@ func TestRouter_findRoute_reg(t *testing.T) {
 				return
 			}
 
-			msg, found := testCase.matchNode.node.equal(foundNode.node)
+			msg, found := testCase.matchNode.equal(foundNode)
 			assert.True(t, found, msg)
-
-			// 比对参数是否相同
-			assert.Equal(t, testCase.matchNode.pathParams, foundNode.pathParams)
 		})
 	}
+}
+
+// TestRouter_findRoute_reg_and_reg_coexist 测试针对注册正则路由时,已有正则路由的情况
+func TestRouter_findRoute_reg_and_reg_coexist(t *testing.T) {
+	// step1. 注册有冲突的路由
+	r := newRouter()
+	mockHandleFunc := func(ctx *Context) {}
+	r.addRoute(http.MethodGet, "/order/detail/:id([0-9]+)", mockHandleFunc)
+
+	// step2. 断言非法用例
+	assert.Panicsf(t, func() {
+		r.addRoute(http.MethodGet, "/order/detail/:name(.+)", mockHandleFunc)
+	}, "web: 非法路由,已有正则子节点 [0-9]+ .不允许同时注册通配符子节点与正则子节点")
+}
+
+// TestRouter_findRoute_reg_and_param_coexist 测试针对注册正则路由时,已有参数路由的情况
+func TestRouter_findRoute_reg_and_param_coexist(t *testing.T) {
+	// step1. 注册有冲突的路由
+	r := newRouter()
+	mockHandleFunc := func(ctx *Context) {}
+	r.addRoute(http.MethodGet, "/order/detail/:id", mockHandleFunc)
+
+	// step2. 断言非法用例
+	assert.Panicsf(t, func() {
+		r.addRoute(http.MethodGet, "/order/detail/:name(.+)", mockHandleFunc)
+	}, "web: 非法路由,已有参数子节点 :id .不允许同时注册通配符子节点与参数子节点")
+}
+
+// TestRouter_findRoute_reg_and_wildcard_coexist 测试针对注册正则路由时,已有通配符路由的情况
+func TestRouter_findRoute_reg_and_wildcard_coexist(t *testing.T) {
+	// step1. 注册有冲突的路由
+	r := newRouter()
+	mockHandleFunc := func(ctx *Context) {}
+	r.addRoute(http.MethodGet, "/order/detail/*", mockHandleFunc)
+
+	// step2. 断言非法用例
+	assert.Panicsf(t, func() {
+		r.addRoute(http.MethodGet, "/order/detail/:name(.+)", mockHandleFunc)
+	}, "web: 非法路由,已有通配符子节点 * .不允许同时注册多个通配符子节点")
 }

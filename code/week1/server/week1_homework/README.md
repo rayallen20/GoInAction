@@ -472,6 +472,7 @@ func (n *node) extractReg(segment string) (regStr string, err error) {
 ##### c. 修改`node.equal()`方法
 
 - 新增了对正则子节点的比对
+- 新增了对节点类型的比对
 
 ```go
 // equal 比较两棵路由树是否相等
@@ -481,6 +482,11 @@ func (n *node) equal(target *node) (msg string, ok bool) {
 	// 如果目标节点为nil 则不相等
 	if target == nil {
 		return fmt.Sprintf("目标节点为nil"), false
+	}
+
+	// 如果两个节点的类型不相等 则不相等
+	if n.typ != target.typ {
+		return fmt.Sprintf("两个节点的类型不相等,源节点的类型为 %d,目标节点的类型为 %d", n.typ, target.typ), false
 	}
 
 	// 如果两个节点的path不相等 则不相等
@@ -578,7 +584,7 @@ func TestRouter_findRoute_reg(t *testing.T) {
 		},
 		{
 			method: http.MethodGet,
-			path:   "/:name(^.+$)/abc",
+			path:   "/user/:name(^.+$)",
 		},
 	}
 
@@ -620,12 +626,12 @@ func TestRouter_findRoute_reg(t *testing.T) {
 		{
 			name:    "reg in middle",
 			method:  http.MethodGet,
-			path:    "/abc/abc",
+			path:    "/user/peter",
 			isFound: true,
 			matchNode: &matchNode{
 				node: &node{
 					typ:           nodeTypeReg,
-					path:          "/:name(^.+$)/abc",
+					path:          ":name(^.+$)",
 					children:      nil,
 					wildcardChild: nil,
 					paramChild:    nil,
@@ -634,7 +640,7 @@ func TestRouter_findRoute_reg(t *testing.T) {
 					HandleFunc:    mockHandle,
 				},
 				pathParams: map[string]string{
-					"name": "abc",
+					"name": "peter",
 				},
 			},
 		},
@@ -651,6 +657,9 @@ func TestRouter_findRoute_reg(t *testing.T) {
 
 			msg, found := testCase.matchNode.node.equal(foundNode.node)
 			assert.True(t, found, msg)
+
+			// 比对参数是否相同
+			assert.Equal(t, testCase.matchNode.pathParams, foundNode.pathParams)
 		})
 	}
 }
@@ -658,19 +667,523 @@ func TestRouter_findRoute_reg(t *testing.T) {
 
 #### 2.3.2 实现
 
+只需在`childOf()`方法中,在查找参数子节点和通配符子节点之前,先查找正则子节点即可.
 
+```go
+// childOf 根据给定的path在当前节点的子节点映射中查找对应的子节点(即:匹配到了静态路由)
+// 若未在子节点映射中找到对应子节点 则先尝试返回当前节点的正则子节点(即:匹配到了正则路由) 若正则子节点为空
+// 则尝试返回当前节点的参数路由子节点(即:匹配到了参数路由) 若参数路由子节点为空
+// 则尝试返回当前节点的通配符子节点(即:匹配到了通配符路由)
+// 优先级: 静态路由 > 正则路由 > 参数路由 > 通配符路由
+// child: 查找到的子节点
+// isParamChild: 查找到的子节点是否为参数路由子节点
+// found: 是否找到了对应的子节点
+func (n *node) childOf(path string) (child *node, isParamChild bool, found bool) {
+	// 当前节点的子节点映射为空 则有可能匹配到 正则子节点 或 参数路由子节点 或 通配符子节点
+	// 此处优先查找正则子节点 再查找参数路由子节点 最后查找通配符子节点
+	// 因为正则子节点更具体 所以正则子节点的优先级高于参数路由子节点
+	// 此处优先查找参数路由子节点 因为参数路由子节点更具体 所以参数路由的优先级高于通配符路由
+	if n.children == nil {
+		// 如果当前节点的正则子节点不为空 则检测参数是否匹配正则表达式 若匹配则返回当前节点的正则子节点
+		if n.regChild != nil {
+			if n.regChild.regExp.MatchString(path) {
+				return n.regChild, false, true
+			}
+		}
 
+		// 如果当前节点的参数子节点不为空 则尝试返回当前节点的参数子节点
+		if n.paramChild != nil {
+			return n.paramChild, true, true
+		}
 
+		// 如果当前节点的参数子节点为空 则尝试返回当前节点的通配符子节点
+		return n.wildcardChild, false, n.wildcardChild != nil
+	}
 
+	// 在子当前节点的节点映射中查找对应的子节点 若未找到同样尝试返回当前节点的参数子节点
+	// 若参数子节点为空 则尝试返回当前节点的通配符子节点
+	child, found = n.children[path]
+	if !found {
+		if n.paramChild != nil {
+			return n.paramChild, true, true
+		}
+		return n.wildcardChild, false, n.wildcardChild != nil
+	}
 
+	// 找到了对应的子节点 则返回该子节点
+	return child, false, found
+}
+```
 
+## PART3. 整理代码
 
+结合老师给出的`node`结构体,需要对代码做如下调整:
 
+### 3.1 注册路由
 
+现在仅仅是对非法的路由(例如路由是空字符串、路由中有多个连续的`/`等情况)做了处理,但对路由冲突的处理不够全面.
 
+注册路由时,判断是否冲突的依据:同一个路由段上只能注册路径参数、通配符路由和正则路由中的一个
 
+### 3.2 查找路由
 
+`node.childOf()`方法不再返回`isParamChild`字段,因为`node`新增了`typ`字段.
 
+因此在`router.findRoute()`方法中,只需对`node.childOf()`方法返回的`node`的`typ`字段做判断即可得知是否需要加参数
 
+### 3.3 测试用例
 
+`matchNode`结构体也应该有一个`equal()`方法,该方法除了判断`node`字段是否相等外,还应该判断`pathParams`字段是否相等
 
+### 3.4 实现
+
+#### 3.4.1 注册路由
+
+```go
+// childOrCreate 本方法用于在节点上获取给定的子节点,如果给定的子节点不存在则创建
+func (n *node) childOrCreate(segment string) *node {
+	if n.isRegChild(segment) {
+		err := n.createRegChild(segment)
+		if err != nil {
+			panic(err.Error())
+		}
+		return n.regChild
+	}
+
+	if n.isParamChild(segment) {
+		err := n.createParamChild(segment)
+		if err != nil {
+			panic(err.Error())
+		}
+		return n.paramChild
+	}
+
+	if n.isWildcardChild(segment) {
+		err := n.createWildcardChild(segment)
+		if err != nil {
+			panic(err.Error())
+		}
+		return n.wildcardChild
+	}
+
+	n.createStaticChild(segment)
+	return n.children[segment]
+}
+
+// isRegChild 判断当前节点是否为正则路由子节点
+// 判断依据:
+// 1. 以":"开头
+// 2. 包含"("
+// 3. 以")"结尾
+func (n *node) isRegChild(segment string) bool {
+	return strings.HasPrefix(segment, ":") && strings.Contains(segment, "(") && strings.HasSuffix(segment, ")")
+}
+
+// createRegChild 创建正则路由子节点
+// 创建依据:
+// 1. 若同路由段上的参数路由子节点已存在 则不允许再创建
+// 2. 若同路由段上的正则路由子节点已存在 则不允许再创建
+// 3. 若同路由段上的通配符路由子节点已存在 则不允许再创建
+// 4. 若无法从路由段中提取出正则表达式 则不允许创建
+func (n *node) createRegChild(segment string) error {
+	if n.regChild != nil {
+		msg := fmt.Sprintf("web: 非法路由,已有正则子节点 %s .不允许同时注册多个正则子节点", n.regChild.regExp.String())
+		return fmt.Errorf(msg)
+	}
+
+	if n.paramChild != nil {
+		msg := fmt.Sprintf("web: 非法路由,已有参数子节点 %s .不允许同时注册正则子节点与参数子节点", n.paramChild.path)
+		return fmt.Errorf(msg)
+	}
+
+	if n.wildcardChild != nil {
+		msg := fmt.Sprintf("web: 非法路由,已有通配符子节点 %s .不允许同时注册通配符子节点与正则子节点", n.wildcardChild.path)
+		return fmt.Errorf(msg)
+	}
+
+	regStr, err := n.extractReg(segment)
+	if err != nil {
+		return fmt.Errorf(err.Error())
+	}
+
+	re, err := regexp.Compile(regStr)
+	if err != nil {
+		msg := fmt.Sprintf("web: 非法路由,无法编译正则表达式.路由段 %s", segment)
+		return fmt.Errorf(msg)
+	}
+
+	n.regChild = &node{
+		path:   segment,
+		typ:    nodeTypeReg,
+		regExp: re,
+	}
+
+	return nil
+}
+
+// isParamChild 判断当前节点是否为参数路由子节点
+// 判断依据:
+// 1. 以":"开头 且不以")"结尾
+func (n *node) isParamChild(segment string) bool {
+	return strings.HasPrefix(segment, ":") && !strings.HasSuffix(segment, ")")
+}
+
+// createParamChild 创建参数路由子节点
+// 创建依据:
+// 1. 若同路由段上的正则路由子节点已存在 则不允许再创建
+// 2. 若同路由段上的参数路由子节点已存在 则不允许再创建
+// 3. 若同路由段上的通配符路由子节点已存在 则不允许再创建
+func (n *node) createParamChild(segment string) error {
+	if n.regChild != nil {
+		msg := fmt.Sprintf("web: 非法路由,已有正则子节点 %s .不允许同时注册正则子节点与参数子节点", n.regChild.regExp.String())
+		return fmt.Errorf(msg)
+	}
+
+	if n.paramChild != nil {
+		msg := fmt.Sprintf("web: 非法路由,已有参数子节点 %s .不允许同时注册多个参数子节点", n.paramChild.path)
+		return fmt.Errorf(msg)
+	}
+
+	if n.wildcardChild != nil {
+		msg := fmt.Sprintf("web: 非法路由,已有通配符子节点 %s .不允许同时注册通配符子节点与参数子节点", n.wildcardChild.path)
+		return fmt.Errorf(msg)
+	}
+
+	n.paramChild = &node{
+		path: segment,
+		typ:  nodeTypeParam,
+	}
+	return nil
+}
+
+// isWildcardChild 判断当前节点是否为通配符路由子节点
+// 判断依据:
+// 1. 路由段为"*"
+func (n *node) isWildcardChild(segment string) bool {
+	return segment == "*"
+}
+
+// createWildcardChild 创建通配符路由子节点
+// 创建依据:
+// 1. 若同路由段上的正则路由子节点已存在 则不允许再创建
+// 2. 若同路由段上的参数路由子节点已存在 则不允许再创建
+// 3. 若同路由段上的通配符路由子节点已存在 则不允许再创建
+func (n *node) createWildcardChild(segment string) error {
+	if n.regChild != nil {
+		msg := fmt.Sprintf("web: 非法路由,已有正则子节点 %s .不允许同时注册通配符子节点与正则子节点", n.regChild.regExp.String())
+		return fmt.Errorf(msg)
+	}
+
+	if n.paramChild != nil {
+		msg := fmt.Sprintf("web: 非法路由,已有参数子节点 %s .不允许同时注册通配符子节点与参数子节点", n.paramChild.path)
+		return fmt.Errorf(msg)
+	}
+
+	if n.wildcardChild != nil {
+		msg := fmt.Sprintf("web: 非法路由,已有通配符子节点 %s .不允许同时注册多个通配符子节点", n.wildcardChild.path)
+		return fmt.Errorf(msg)
+	}
+
+	n.wildcardChild = &node{
+		path: segment,
+		typ:  nodeTypeAny,
+	}
+
+	return nil
+}
+
+// createStaticChild 创建静态路由子节点
+func (n *node) createStaticChild(segment string) {
+	if n.children == nil {
+		n.children = map[string]*node{}
+	}
+
+	if _, ok := n.children[segment]; ok {
+		return
+	}
+
+	res := &node{
+		path: segment,
+		typ:  nodeTypeStatic,
+	}
+	n.children[segment] = res
+
+	return
+}
+```
+
+#### 3.4.2 查找路由
+
+- `node.childOf()`: 不再返回`isParamChild`字段
+
+```go
+// childOf 根据给定的path在当前节点的子节点映射中查找对应的子节点
+// 查找优先级: 静态路由 > 正则路由 > 参数路由 > 通配符路由
+func (n *node) childOf(path string) (child *node, found bool) {
+	// 当前节点的子节点映射为空 则尝试查找 正则子节点 或 参数路由子节点 或 通配符子节点
+	if n.children == nil {
+		// 优先尝试查找正则子节点
+		if n.regChild != nil && n.regChild.regExp.MatchString(path) {
+			return n.regChild, true
+		}
+
+		// 再尝试查找参数路由子节点
+		if n.paramChild != nil {
+			return n.paramChild, true
+		}
+
+		// 最后尝试查找通配符子节点
+		return n.wildcardChild, n.wildcardChild != nil
+	}
+
+	// 在子当前节点的节点映射中查找对应的子节点 若未找到同样尝试返回当前节点的参数子节点
+	// 若参数子节点为空 则尝试返回当前节点的通配符子节点
+	child, found = n.children[path]
+	if !found {
+		if n.paramChild != nil {
+			return n.paramChild, true
+		}
+		return n.wildcardChild, n.wildcardChild != nil
+	}
+
+	// 找到了对应的子节点 则返回该子节点
+	return child, found
+}
+```
+
+- `router.findRoute()`: 对`node.childOf()`方法返回的`node`的`typ`字段做判断,判断是否需要加参数
+
+```go
+// findRoute 根据给定的HTTP方法和路由路径,在路由森林中查找对应的节点
+// 若该节点为参数路径节点,则不仅返回该节点,还返回参数名和参数值
+// 否则,仅返回该节点
+func (r *router) findRoute(method string, path string) (*matchNode, bool) {
+	targetMatchNode := &matchNode{}
+	root, ok := r.trees[method]
+	// 给定的HTTP动词在路由森林中不存在对应的路由树,则直接返回false
+	if !ok {
+		return nil, false
+	}
+
+	// 对根节点做特殊处理
+	if path == "/" {
+		targetMatchNode.node = root
+		return targetMatchNode, true
+	}
+
+	// 给定的HTTP动词在路由森林中存在对应的路由树,则在该路由树中查找对应的节点
+	// 去掉前导和后置的"/"
+	path = strings.Trim(path, "/")
+	segments := strings.Split(path, "/")
+
+	// Tips: 同样的 这里我认为用target作为变量名表现力更强
+	target := root
+
+	for _, segment := range segments {
+		child, found := target.childOf(segment)
+		if !found {
+			// 若未匹配到节点 且 当前节点为通配符节点
+			// 且 当前节点为叶子节点(这意味着注册时通配符子节点是最后一段路由段) 则返回该叶子节点
+			if target.typ == nodeTypeAny && target.children == nil && target.paramChild == nil && target.wildcardChild == nil {
+				targetMatchNode.node = target
+				return targetMatchNode, true
+			}
+
+			return nil, false
+		}
+
+		// 若当前节点为正则节点,则将参数名和参数值保存到targetMatchNode中
+		if child.typ == nodeTypeReg {
+			// 参数名是 :id(正则表达式) 中的id 此处判断为从`:`开始到`(`结束的字符串
+			name := child.path[1:strings.Index(child.path, "(")]
+			// 参数值就是当前路由路径中的路由段
+			value := segment
+			targetMatchNode.addPathParams(name, value)
+		}
+
+		// 若当前节点为参数节点,则将参数名和参数值保存到targetMatchNode中
+		if child.typ == nodeTypeParam {
+			// 参数名是形如 :id 的格式, 因此需要去掉前导的:
+			name := child.path[1:]
+			// 参数值就是当前路由路径中的路由段
+			value := segment
+			targetMatchNode.addPathParams(name, value)
+		}
+
+		// 如果在当前节点的子节点映射中找到了对应的子节点,则继续在该子节点中查找
+		target = child
+	}
+
+	// 如果找到了对应的节点,则返回该节点
+	// Tips: 此处有2种设计 一种是用标量表示是否找到了子节点
+	// Tips: 另一种是 return target, target.HandleFunc != nil
+	// Tips: 这种返回就表示找到了子节点且子节点必然有对应的业务处理函数
+	// 此处我倾向用第1种设计 因为方法名叫findRoute,表示是否找到节点的意思.而非表示是否找到了一个有对应的业务处理函数的节点
+	targetMatchNode.node = target
+	return targetMatchNode, true
+}
+```
+
+#### 3.4.3 测试用例
+
+##### a. 新增`matchNode.equal()`方法
+
+```go
+// equal 比较两个matchNode是否相等
+// msg: 两个matchNode不相等时的错误信息
+// ok: 两个matchNode是否相等
+func (m *matchNode) equal(target *matchNode) (msg string, ok bool) {
+	// 比对两个matchNode的node是否相等
+	msg, equal := m.node.equal(target.node)
+	if !equal {
+		return msg, false
+	}
+
+	// 比对两个matchNode的pathParams是否相等
+	if len(m.pathParams) != len(target.pathParams) {
+		return fmt.Sprintf("两个matchNode的pathParams长度不相等"), false
+	}
+
+	for name, value := range m.pathParams {
+		dstValue, ok := target.pathParams[name]
+		if !ok {
+			return fmt.Sprintf("目标matchNode的pathParams中没有name为 %s 的pathParam", name), false
+		}
+
+		if value != dstValue {
+			return fmt.Sprintf("两个matchNode的pathParams中name为 %s 的pathParam的值不相等", name), false
+		}
+	}
+
+	return "", true
+}
+```
+
+##### b. 针对参数路由的路由冲突测试用例
+
+```go
+// TestRouter_findRoute_param_and_reg_coexist 测试针对注册参数路由时,已有正则路由的情况
+func TestRouter_findRoute_param_and_reg_coexist(t *testing.T) {
+	// step1. 注册有冲突的路由
+	r := newRouter()
+	mockHandleFunc := func(ctx *Context) {}
+	r.addRoute(http.MethodGet, "/order/detail/:name(.+)", mockHandleFunc)
+
+	// step2. 断言非法用例
+	assert.Panicsf(t, func() {
+		r.addRoute(http.MethodGet, "/order/detail/:id", mockHandleFunc)
+	}, "web: 非法路由,已有正则子节点 .+ .不允许同时注册正则子节点与参数子节点")
+}
+
+// TestRouter_findRoute_param_and_param_coexist 测试针对注册参数路由时,已有参数路由的情况
+func TestRouter_findRoute_param_and_param_coexist(t *testing.T) {
+	// step1. 注册有冲突的路由
+	r := newRouter()
+	mockHandleFunc := func(ctx *Context) {}
+	r.addRoute(http.MethodGet, "/order/detail/:id", mockHandleFunc)
+
+	// step2. 断言非法用例
+	assert.Panicsf(t, func() {
+		r.addRoute(http.MethodGet, "/order/detail/:name", mockHandleFunc)
+	}, "web: 非法路由,已有参数子节点 :id .不允许同时注册多个参数子节点")
+}
+
+// TestRouter_findRoute_param_and_wildcard_coexist 测试针对注册参数路由时,已有通配符路由的情况
+func TestRouter_findRoute_param_and_wildcard_coexist(t *testing.T) {
+	// step1. 注册有冲突的路由
+	r := newRouter()
+	mockHandleFunc := func(ctx *Context) {}
+	r.addRoute(http.MethodGet, "/order/detail/*", mockHandleFunc)
+
+	// step2. 断言非法用例
+	assert.Panicsf(t, func() {
+		r.addRoute(http.MethodGet, "/order/detail/:id", mockHandleFunc)
+	}, "web: 非法路由,已有通配符子节点 * .不允许同时注册通配符子节点与参数子节点")
+}
+```
+
+##### c. 针对通配符路由的路由冲突测试用例
+
+```go
+// TestRouter_findRoute_wildcard_and_reg_coexist 测试针对注册通配符路由时,已有正则路由的情况
+func TestRouter_findRoute_wildcard_and_reg_coexist(t *testing.T) {
+	// step1. 注册有冲突的路由
+	r := newRouter()
+	mockHandleFunc := func(ctx *Context) {}
+	r.addRoute(http.MethodGet, "/order/detail/:id([0-9]+)", mockHandleFunc)
+
+	// step2. 断言非法用例
+	assert.Panicsf(t, func() {
+		r.addRoute(http.MethodGet, "/order/detail/*", mockHandleFunc)
+	}, "web: 非法路由,已有正则子节点 [0-9]+ .不允许同时注册通配符子节点与正则子节点")
+}
+
+// TestRouter_findRoute_wildcard_and_param_coexist 测试针对注册通配符路由时,已有参数路由的情况
+func TestRouter_findRoute_wildcard_and_param_coexist(t *testing.T) {
+	// step1. 注册有冲突的路由
+	r := newRouter()
+	mockHandleFunc := func(ctx *Context) {}
+	r.addRoute(http.MethodGet, "/order/detail/:id", mockHandleFunc)
+
+	// step2. 断言非法用例
+	assert.Panicsf(t, func() {
+		r.addRoute(http.MethodGet, "/order/detail/*", mockHandleFunc)
+	}, "web: 非法路由,已有参数路由.不允许同时注册通配符路由和参数路由")
+}
+
+// TestRouter_findRoute_wildcard_and_wildcard_coexist 测试针对注册通配符路由时,已有通配符路由的情况
+func TestRouter_findRoute_wildcard_and_wildcard_coexist(t *testing.T) {
+	// step1. 注册有冲突的路由
+	r := newRouter()
+	mockHandleFunc := func(ctx *Context) {}
+	r.addRoute(http.MethodGet, "/order/detail/*", mockHandleFunc)
+
+	// step2. 断言非法用例
+	assert.Panicsf(t, func() {
+		r.addRoute(http.MethodGet, "/order/detail/*", mockHandleFunc)
+	}, "web: 非法路由,已有通配符子节点 * .不允许同时注册多个通配符子节点")
+}
+```
+
+##### d. 针对正则路由的路由冲突测试用例
+
+```go
+// TestRouter_findRoute_reg_and_reg_coexist 测试针对注册正则路由时,已有正则路由的情况
+func TestRouter_findRoute_reg_and_reg_coexist(t *testing.T) {
+	// step1. 注册有冲突的路由
+	r := newRouter()
+	mockHandleFunc := func(ctx *Context) {}
+	r.addRoute(http.MethodGet, "/order/detail/:id([0-9]+)", mockHandleFunc)
+
+	// step2. 断言非法用例
+	assert.Panicsf(t, func() {
+		r.addRoute(http.MethodGet, "/order/detail/:name(.+)", mockHandleFunc)
+	}, "web: 非法路由,已有正则子节点 [0-9]+ .不允许同时注册通配符子节点与正则子节点")
+}
+
+// TestRouter_findRoute_reg_and_param_coexist 测试针对注册正则路由时,已有参数路由的情况
+func TestRouter_findRoute_reg_and_param_coexist(t *testing.T) {
+	// step1. 注册有冲突的路由
+	r := newRouter()
+	mockHandleFunc := func(ctx *Context) {}
+	r.addRoute(http.MethodGet, "/order/detail/:id", mockHandleFunc)
+
+	// step2. 断言非法用例
+	assert.Panicsf(t, func() {
+		r.addRoute(http.MethodGet, "/order/detail/:name(.+)", mockHandleFunc)
+	}, "web: 非法路由,已有参数子节点 :id .不允许同时注册通配符子节点与参数子节点")
+}
+
+// TestRouter_findRoute_reg_and_wildcard_coexist 测试针对注册正则路由时,已有通配符路由的情况
+func TestRouter_findRoute_reg_and_wildcard_coexist(t *testing.T) {
+	// step1. 注册有冲突的路由
+	r := newRouter()
+	mockHandleFunc := func(ctx *Context) {}
+	r.addRoute(http.MethodGet, "/order/detail/*", mockHandleFunc)
+
+	// step2. 断言非法用例
+	assert.Panicsf(t, func() {
+		r.addRoute(http.MethodGet, "/order/detail/:name(.+)", mockHandleFunc)
+	}, "web: 非法路由,已有通配符子节点 * .不允许同时注册多个通配符子节点")
+}
+```
