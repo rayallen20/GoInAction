@@ -1,4 +1,4 @@
-package bindJSON
+package queryValue
 
 import (
 	"fmt"

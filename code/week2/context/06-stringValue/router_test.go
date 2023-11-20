@@ -1,4 +1,4 @@
-package formValue
+package stringValue
 
 import (
 	"fmt"

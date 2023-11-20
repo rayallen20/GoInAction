@@ -1,4 +1,4 @@
-package bindJSON
+package stringValue
 
 import (
 	"fmt"

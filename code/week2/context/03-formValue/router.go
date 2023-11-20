@@ -27,7 +27,7 @@ func newRouter() router {
 // 3. 不能以"/"结尾
 // 4. 不能包含连续的"/"
 // - 已经注册了的路由,无法被覆盖.例如`/user/home`注册两次,会冲突
-// - `path`必须以`/`开始并且结尾不能有`/`,中间也不允许有连续的`/`
+// - `06-stringValue`必须以`/`开始并且结尾不能有`/`,中间也不允许有连续的`/`
 // - 不能在同一个位置注册不同的参数路由.例如`/user/:id`和`/user/:name`冲突
 // - 不能在同一个位置同时注册通配符路由和参数路由.例如`/user/:id`和`/user/*`冲突
 // - 同名路径参数,在路由匹配的时候,值会被覆盖.例如`/user/:id/abc/:id`,那么`/user/123/abc/456`,最终`id = 456`
@@ -76,7 +76,7 @@ func (r *router) addRoute(method string, path string, handleFunc HandleFunc) {
 	// Tips: 去掉前导的"/" 否则直接切割出来的第一个元素为空字符串
 	// Tips: 以下代码是老师写的去掉前导的"/"的方式 我认为表达力有点弱 但是性能应该会好于strings.TrimLeft
 	// Tips: 以下代码会有问题,因为假如前导字符不是"/" 则不该被去掉
-	// path = path[1:]
+	// 06-stringValue = 06-stringValue[1:]
 	path = strings.TrimLeft(path, "/")
 	segments := strings.Split(path, "/")
 

@@ -367,7 +367,7 @@ func TestRouter_findRoute(t *testing.T) {
 
 		// 测试路由不存在的用例
 		{
-			name:      "path not found",
+			name:      "06-stringValue not found",
 			method:    http.MethodGet,
 			path:      "/user",
 			isFound:   false,
