@@ -66,28 +66,34 @@ func (s *HTTPServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	var m Middleware = func(next HandleFunc) HandleFunc {
 		return func(ctx *Context) {
 			next(ctx)
-
-			n, err := ctx.Resp.Write(ctx.RespData)
-			if err != nil {
-				s.logFunc("响应数据写入失败: %v", err)
-			}
-
-			if n != len(ctx.RespData) {
-				s.logFunc("响应数据写入不完全, 期望写入: %d 字节, 实际写入: %d 字节", len(ctx.RespData), n)
-			}
-
-			// 若使用者设置了响应码 则刷到响应上
-			if ctx.RespStatusCode != 0 {
-				ctx.Resp.WriteHeader(ctx.RespStatusCode)
-			}
+			s.flashResp(ctx)
 		}
 	}
 	// 最后注册将响应数据和响应码写入到响应体中的中间件
-	// 确保这个中间件是执行完HandleFunc之后第一个执行的中间件
+	// 确保这个中间件是执行完所有对响应码和响应数据的读写操作后才执行的
+	// 换言之,确保这个中间件是返回响应之前最后一个执行的
 	root = m(root)
 
 	// 查找路由树并执行命中的业务逻辑
 	root(ctx)
+}
+
+// flashResp 将响应数据和响应码写入到响应体中
+func (s *HTTPServer) flashResp(ctx *Context) {
+	// 若使用者设置了响应码 则刷到响应上
+	if ctx.RespStatusCode != 0 {
+		ctx.Resp.WriteHeader(ctx.RespStatusCode)
+	}
+
+	// 刷响应数据到响应上
+	n, err := ctx.Resp.Write(ctx.RespData)
+	if err != nil {
+		s.logFunc("响应数据写入失败: %v", err)
+	}
+
+	if n != len(ctx.RespData) {
+		s.logFunc("响应数据写入不完全, 期望写入: %d 字节, 实际写入: %d 字节", len(ctx.RespData), n)
+	}
 }
 
 // serve 查找路由树并执行命中的业务逻辑
