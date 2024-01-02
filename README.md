@@ -10,3 +10,4 @@
 |责任链模式|第2周第12课:AOP设计方案-Middleware|《GO语言设计模式》第4章4.2节|否||
 |生成器模式|第2周第13课:Middleware-AccessLog|《GO语言设计模式》第2章2.4节|否||
 |Option模式|第2周第13课:Middleware-AccessLog|[Go语言设计模式之函数选项模式](https://www.liwenzhou.com/posts/Go/functional-options-pattern/)|否||
+|异步记录指标的方案|第2周第18课:Middleware-AccessLog|给出的课件代码里有|否||
