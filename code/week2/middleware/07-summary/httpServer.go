@@ -91,9 +91,14 @@ func (s *HTTPServer) flashResp(ctx *Context) {
 
 // serve 查找路由树并执行命中的业务逻辑
 func (s *HTTPServer) serve(ctx *Context) {
+	// 检测并执行 beforeRoute 的filter
+
 	method := ctx.Req.Method
 	path := ctx.Req.URL.Path
 	targetNode, ok := s.findRoute(method, path)
+
+	// 检测并执行 afterRoute 的filter
+
 	// 没有在路由树中找到对应的路由节点 或 找到了路由节点的处理函数为空(即NPE:none pointer exception 的问题)
 	// 则返回404
 	if !ok || targetNode.node.HandleFunc == nil {
@@ -107,8 +112,13 @@ func (s *HTTPServer) serve(ctx *Context) {
 
 	// 命中节点则将节点的路由设置到上下文中
 	ctx.MatchRoute = targetNode.node.route
+
+	// 检测并执行 beforeExecute 的filter
+
 	// 执行路由节点的处理函数
 	targetNode.node.HandleFunc(ctx)
+
+	// 检测并执行 afterExecute 的filter
 }
 
 // Start 启动WEB服务器
